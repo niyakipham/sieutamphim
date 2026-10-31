@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#1029d8" />
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
   <meta
     name="description"
     content="TeraBox Tools — phân tích link chia sẻ và tải hàng loạt file từ một link công khai."
@@ -1050,7 +1051,7 @@
         </div>
         <h2 id="toolTitle">Drop a link.<br /><em>Get every file.</em></h2>
         <p class="card-copy">
-          Nhập link TeraBox công khai. Web tĩnh sẽ gọi public converter để đọc cấu trúc thư mục và trả về link tải trực tiếp.
+          Nhập link TeraBox công khai. Web tĩnh cần một API có bật CORS để đọc cấu trúc thư mục và trả về link tải trực tiếp.
         </p>
 
         <form class="analyze-form" id="analyzeForm">
@@ -1072,7 +1073,7 @@
           </button>
         </form>
         <div class="loading-line" id="loadingLine" aria-hidden="true"></div>
-        <p class="card-footnote">Chỉ dùng với nội dung bạn có quyền tải. Nếu tự host API, mở trang với ?api=https://your-api.example.</p>
+        <p class="card-footnote">Chỉ dùng với nội dung bạn có quyền tải. Cấu hình API bằng cách mở trang với ?api=https://your-api.example.</p>
       </section>
     </section>
 
@@ -1126,7 +1127,6 @@
       var files = [];
       var queryApiBase = new URLSearchParams(window.location.search).get('api');
       var apiBase = String(window.TERABOX_API_BASE || queryApiBase || '').replace(/\/+$/, '');
-      var publicApiBase = 'https://terabox.hnn.workers.dev';
 
       function escapeHtml(value) {
         var element = document.createElement('div');
@@ -1168,163 +1168,6 @@
             || ('API trả về HTTP ' + response.status + '.'));
         }
         return payload;
-      }
-
-      function getShareToken(rawUrl) {
-        var parsed;
-        try {
-          parsed = new URL(rawUrl.trim());
-        } catch (error) {
-          throw new Error('Link TeraBox không đúng định dạng.');
-        }
-
-        var token = parsed.searchParams.get('surl') || parsed.searchParams.get('shorturl');
-        if (!token) {
-          var pathMatch = parsed.pathname.match(/\/s\/([^/?#]+)/i);
-          token = pathMatch ? pathMatch[1] : '';
-        }
-
-        if (!token) {
-          throw new Error('Không tìm thấy mã chia sẻ trong link TeraBox.');
-        }
-
-        try {
-          token = decodeURIComponent(token).trim();
-        } catch (error) {
-          token = token.trim();
-        }
-
-        if (!/^[A-Za-z0-9_-]{5,256}$/.test(token)) {
-          throw new Error('Mã chia sẻ TeraBox không hợp lệ.');
-        }
-        return token;
-      }
-
-      function getTokenCandidates(token) {
-        var candidates = [token];
-        if (token.charAt(0) === '1') {
-          candidates.push(token.slice(1));
-        } else {
-          candidates.push('1' + token);
-        }
-        return candidates.filter(function (value, index, list) {
-          return value && list.indexOf(value) === index;
-        });
-      }
-
-      function isDirectory(item) {
-        var flag = item && item.is_dir;
-        if (flag == null) flag = item && item.isdir;
-        if (flag == null) flag = item && item.isDir;
-        return String(flag) === '1' || flag === true || Array.isArray(item && item.children);
-      }
-
-      function collectPublicFiles(items, parentPath, output) {
-        (items || []).forEach(function (item) {
-          var name = String(item.filename || item.server_filename || item.name || 'Unnamed file');
-          var currentPath = item.fullPath || item.path || (parentPath ? parentPath + '/' + name : '/' + name);
-
-          if (isDirectory(item)) {
-            if (Array.isArray(item.children)) {
-              collectPublicFiles(item.children, currentPath, output);
-            }
-            return;
-          }
-
-          var rawSize = Number(item.size);
-          output.push({
-            name: name,
-            path: currentPath,
-            sizeBytes: Number.isFinite(rawSize) && rawSize >= 0 ? rawSize : 0,
-            size: formatClientBytes(rawSize),
-            fsId: item.fs_id || item.fsId || ''
-          });
-        });
-        return output;
-      }
-
-      function formatClientBytes(bytes) {
-        if (!Number.isFinite(bytes) || bytes <= 0) return 'Không rõ dung lượng';
-        var units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        var unitIndex = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-        var value = bytes / Math.pow(1024, unitIndex);
-        return value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 2) + ' ' + units[unitIndex];
-      }
-
-      async function getPublicInfo(rawUrl) {
-        var token = getShareToken(rawUrl);
-        var lastError;
-
-        for (var i = 0; i < getTokenCandidates(token).length; i += 1) {
-          var candidate = getTokenCandidates(token)[i];
-          var endpoint = publicApiBase + '/api/get-info-new?shorturl='
-            + encodeURIComponent(candidate) + '&pwd=';
-          try {
-            var payload = await requestJson(endpoint, { method: 'GET', mode: 'cors' });
-            if (payload && payload.ok === false) {
-              throw new Error(payload.msg || 'Link không tồn tại hoặc đã hết hạn.');
-            }
-            if (!payload || !Array.isArray(payload.list) || !payload.list.length) {
-              throw new Error('Public API không tìm thấy file trong link này.');
-            }
-            return payload;
-          } catch (error) {
-            lastError = error;
-          }
-        }
-
-        throw lastError || new Error('Không thể lấy thông tin link TeraBox.');
-      }
-
-      function wait(milliseconds) {
-        return new Promise(function (resolve) {
-          window.setTimeout(resolve, milliseconds);
-        });
-      }
-
-      async function analyzeWithPublicApi(rawUrl) {
-        var info = await getPublicInfo(rawUrl);
-        var rawFiles = collectPublicFiles(info.list, '', []);
-        if (!rawFiles.length) {
-          throw new Error('Không tìm thấy file trong link TeraBox.');
-        }
-
-        var linkedFiles = [];
-        var warnings = [];
-        for (var i = 0; i < rawFiles.length; i += 1) {
-          var file = rawFiles[i];
-          setStatus('Đang tạo link ' + (i + 1) + '/' + rawFiles.length + ': ' + file.name, '');
-          try {
-            var downloadPayload = await requestJson(publicApiBase + '/api/get-download', {
-              method: 'POST',
-              mode: 'cors',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                shareid: info.shareid,
-                uk: info.uk,
-                sign: info.sign,
-                timestamp: info.timestamp,
-                fs_id: file.fsId
-              })
-            });
-            var directLink = downloadPayload && (downloadPayload.downloadLink
-              || downloadPayload.dlink
-              || downloadPayload.url);
-            if (!directLink) throw new Error('API không trả về link tải.');
-
-            file.directLink = new URL(directLink, publicApiBase).toString();
-            linkedFiles.push(file);
-          } catch (error) {
-            warnings.push(file.name + ': ' + error.message);
-          }
-
-          if (i < rawFiles.length - 1) await wait(400);
-        }
-
-        if (!linkedFiles.length) {
-          throw new Error(warnings[0] || 'Không tạo được link tải cho file nào.');
-        }
-        return { files: linkedFiles, warnings: warnings };
       }
 
       function renderFiles() {
@@ -1371,19 +1214,20 @@
         setStatus('Đang lấy danh sách file và tạo link tải trực tiếp...', '');
 
         try {
-          var payload;
-          if (apiBase) {
-            payload = await requestJson(apiBase + '/api/analyze', {
-              method: 'POST',
-              mode: 'cors',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ url: value })
-            });
-            if (!payload.success) {
-              throw new Error(payload.message || 'Backend không thể phân tích link này.');
-            }
-          } else {
-            payload = await analyzeWithPublicApi(value);
+          if (!apiBase) {
+            throw new Error(
+              'Web tĩnh không thể gọi API TeraBox trực tiếp vì CORS. Hãy thêm ?api=https://your-api.example vào URL trang.'
+            );
+          }
+
+          var payload = await requestJson(apiBase + '/api/analyze', {
+            method: 'POST',
+            mode: 'cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: value })
+          });
+          if (!payload.success) {
+            throw new Error(payload.message || 'API không thể phân tích link này.');
           }
 
           files = Array.isArray(payload.files) ? payload.files : [];
